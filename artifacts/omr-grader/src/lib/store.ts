@@ -15,7 +15,6 @@ export interface Template {
   optionsPerQuestion: number;
   correctAnswers: string[];
   gridConfig?: GridConfig;
-  templateImageDataUrl?: string;
   createdAt: number;
 }
 
@@ -38,6 +37,7 @@ interface StoreState {
   templates: Template[];
   results: GradingResult[];
   addTemplate: (template: Template) => void;
+  updateTemplate: (id: string, patch: Partial<Template>) => void;
   deleteTemplate: (id: string) => void;
   addResult: (result: GradingResult) => void;
   deleteResult: (id: string) => void;
@@ -50,6 +50,12 @@ export const useStore = create<StoreState>()(
       results: [],
       addTemplate: (template) =>
         set((state) => ({ templates: [...state.templates, template] })),
+      updateTemplate: (id, patch) =>
+        set((state) => ({
+          templates: state.templates.map((t) =>
+            t.id === id ? { ...t, ...patch } : t
+          ),
+        })),
       deleteTemplate: (id) =>
         set((state) => ({
           templates: state.templates.filter((t) => t.id !== id),

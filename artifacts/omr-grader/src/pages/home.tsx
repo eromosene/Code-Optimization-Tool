@@ -181,7 +181,7 @@ export default function Home() {
           <div>
             <h3 className="text-xl font-semibold">No Templates Yet</h3>
             <p className="text-sm text-muted-foreground max-w-sm mt-2">
-              First, go to Templates and snap a photo of the correctly filled answer key sheet.
+              First, go to Templates and fill in the correct answers for each question to create an answer key.
             </p>
           </div>
           <Link href="/templates">
@@ -229,13 +229,9 @@ export default function Home() {
                       : "border-border"
                   }`}
                 >
-                  {t.templateImageDataUrl ? (
-                    <img src={t.templateImageDataUrl} alt="" className="h-10 w-10 rounded object-cover shrink-0" />
-                  ) : (
-                    <div className="h-10 w-10 rounded bg-muted flex items-center justify-center shrink-0">
-                      <ImageIcon className="h-5 w-5 text-muted-foreground/40" />
-                    </div>
-                  )}
+                  <div className="h-10 w-10 rounded bg-muted flex items-center justify-center shrink-0">
+                    <ImageIcon className="h-5 w-5 text-muted-foreground/40" />
+                  </div>
                   <div className="min-w-0">
                     <div className="font-medium text-sm truncate">{t.name}</div>
                     <div className="text-xs text-muted-foreground">

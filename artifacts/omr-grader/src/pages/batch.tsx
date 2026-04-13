@@ -230,11 +230,7 @@ export default function Batch() {
                       : "border-border"
                   }`}
                 >
-                  {t.templateImageDataUrl ? (
-                    <img src={t.templateImageDataUrl} alt="" className="h-6 w-6 rounded object-cover shrink-0" />
-                  ) : (
-                    <ImageIcon className="h-4 w-4 text-muted-foreground/40 shrink-0" />
-                  )}
+                  <ImageIcon className="h-4 w-4 text-muted-foreground/40 shrink-0" />
                   <span>{t.name}</span>
                   {selectedTemplateId === t.id && (
                     <CheckCircle2 className="h-3.5 w-3.5 text-primary ml-1" />
