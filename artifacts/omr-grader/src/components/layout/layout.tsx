@@ -3,7 +3,8 @@ import {
   Scan, 
   History, 
   Files, 
-  Menu 
+  Menu,
+  Layers
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -13,6 +14,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const navigation = [
     { name: "Grade Sheet", href: "/", icon: Scan },
+    { name: "Batch Grading", href: "/batch", icon: Layers },
     { name: "Templates", href: "/templates", icon: Files },
     { name: "History", href: "/history", icon: History },
   ];
