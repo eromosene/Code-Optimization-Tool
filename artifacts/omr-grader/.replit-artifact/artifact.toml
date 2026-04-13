@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "OMR Grader"
+version = "1.0.0"
+id = "artifacts/omr-grader"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24849
+
+[services.development]
+run = "pnpm --filter @workspace/omr-grader run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/omr-grader", "run", "build" ]
+publicDir = "artifacts/omr-grader/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24849"
+BASE_PATH = "/"

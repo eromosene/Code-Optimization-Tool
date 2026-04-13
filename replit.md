@@ -16,6 +16,21 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - **API codegen**: Orval (from OpenAPI spec)
 - **Build**: esbuild (CJS bundle)
 
+## Artifacts
+
+### OMR Grader (GradeSnap)
+- **Path**: `artifacts/omr-grader`
+- **Type**: React + Vite (frontend-only, no backend)
+- **Preview**: `/` (root)
+- **State management**: Zustand with localStorage persistence
+- **Purpose**: OMR (Optical Mark Recognition) bubble sheet grading tool
+- **Features**:
+  - Template management: define answer keys (questions, options, correct answers)
+  - Image upload with grid overlay for bubble alignment
+  - Canvas API-based pixel analysis for auto-detecting filled bubbles
+  - Scoring with visual diff (correct/incorrect)
+  - Grading history with CSV export and batch statistics
+
 ## Key Commands
 
 - `pnpm run typecheck` — full typecheck across all packages
