@@ -1,12 +1,21 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
+export interface GridConfig {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface Template {
   id: string;
   name: string;
   questionCount: number;
   optionsPerQuestion: number;
   correctAnswers: string[];
+  gridConfig?: GridConfig;
+  templateImageDataUrl?: string;
   createdAt: number;
 }
 
