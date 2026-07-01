@@ -7,11 +7,14 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
   FileUp, ListChecks, CheckCircle2, XCircle, Play,
-  Save, RefreshCw, AlertTriangle, Camera, ImageIcon
+  Save, RefreshCw, AlertTriangle, Camera, ImageIcon, ScanSearch
 } from "lucide-react";
 import { Link } from "wouter";
 import { processOMRImage, DetectedAnswer } from "@/lib/omr-processor";
 import { useToast } from "@/hooks/use-toast";
+import { detectAndCorrectSheet, loadOpenCV } from "@/lib/sheet-detector";
+
+type DetectionStatus = "idle" | "loading-cv" | "detecting" | "found" | "not-found" | "error";
 
 const OPTION_LABELS = ["A", "B", "C", "D", "E"];
 
@@ -30,9 +33,12 @@ export default function Home() {
   const [results, setResults] = useState<DetectedAnswer[] | null>(null);
   const [studentName, setStudentName] = useState("");
 
+  const [detectionStatus, setDetectionStatus] = useState<DetectionStatus>("idle");
+
   const imageRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const debugCanvasRef = useRef<HTMLCanvasElement>(null);
 
   const selectedTemplate = templates.find((t) => t.id === selectedTemplateId);
 
@@ -46,10 +52,42 @@ export default function Home() {
     setResults(null);
   }, [selectedTemplateId]);
 
+  useEffect(() => {
+    if (!imageUrl || naturalSize.width === 0 || !imageRef.current || !debugCanvasRef.current) return;
+
+    let cancelled = false;
+
+    async function runDetection() {
+      setDetectionStatus("loading-cv");
+      try {
+        await loadOpenCV();
+      } catch (err) {
+        if (!cancelled) setDetectionStatus("error");
+        return;
+      }
+
+      if (cancelled || !imageRef.current || !debugCanvasRef.current) return;
+      setDetectionStatus("detecting");
+
+      try {
+        const corners = await detectAndCorrectSheet(imageRef.current, debugCanvasRef.current);
+        if (cancelled) return;
+        setDetectionStatus(corners ? "found" : "not-found");
+      } catch (err) {
+        console.error("[sheet-detector] error:", err);
+        if (!cancelled) setDetectionStatus("error");
+      }
+    }
+
+    runDetection();
+    return () => { cancelled = true; };
+  }, [imageUrl, naturalSize]);
+
   const handleFileSelect = useCallback((file: File) => {
     const url = URL.createObjectURL(file);
     setImageUrl(url);
     setResults(null);
+    setDetectionStatus("idle");
   }, []);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -284,6 +322,60 @@ export default function Home() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Debug: sheet detection result */}
+          {imageUrl && (
+            <Card className="border-dashed">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-2">
+                  <ScanSearch className="h-4 w-4" />
+                  Auto-detect Debug
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                <div className="flex items-center gap-2 text-xs">
+                  {detectionStatus === "idle" && (
+                    <span className="text-muted-foreground">Waiting for image…</span>
+                  )}
+                  {detectionStatus === "loading-cv" && (
+                    <>
+                      <RefreshCw className="h-3 w-3 animate-spin text-muted-foreground" />
+                      <span className="text-muted-foreground">Loading OpenCV…</span>
+                    </>
+                  )}
+                  {detectionStatus === "detecting" && (
+                    <>
+                      <RefreshCw className="h-3 w-3 animate-spin text-blue-500" />
+                      <span className="text-blue-600">Detecting sheet corners…</span>
+                    </>
+                  )}
+                  {detectionStatus === "found" && (
+                    <>
+                      <CheckCircle2 className="h-3 w-3 text-green-500" />
+                      <span className="text-green-600 font-medium">Sheet detected — perspective corrected below</span>
+                    </>
+                  )}
+                  {detectionStatus === "not-found" && (
+                    <>
+                      <AlertTriangle className="h-3 w-3 text-amber-500" />
+                      <span className="text-amber-600">No confident rectangle found</span>
+                    </>
+                  )}
+                  {detectionStatus === "error" && (
+                    <>
+                      <XCircle className="h-3 w-3 text-red-500" />
+                      <span className="text-red-600">Detection error — see console</span>
+                    </>
+                  )}
+                </div>
+                <canvas
+                  ref={debugCanvasRef}
+                  className={`w-full rounded border ${detectionStatus === "found" ? "block" : "hidden"}`}
+                  style={{ maxHeight: 260, objectFit: "contain" }}
+                />
+              </CardContent>
+            </Card>
+          )}
 
           {/* 3. Detect */}
           {imageUrl && !results && (
