@@ -9,8 +9,19 @@ declare global {
 export type Point = { x: number; y: number };
 export type SheetCorners = [Point, Point, Point, Point];
 
+// Versioned, immutable jsDelivr build — served with `Cache-Control: max-age=31536000, immutable`,
+// so once a browser has fetched it once it will not re-download it on later visits.
+const OPENCV_CDN_URL =
+  "https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js";
+
 let cvReadyPromise: Promise<any> | null = null;
 
+/**
+ * Kicks off (or reuses) the OpenCV.js load. Safe to call multiple times —
+ * intended to be called early (e.g. as soon as a template is selected) so
+ * the WASM module has time to finish loading in the background before the
+ * user actually needs it.
+ */
 export function loadOpenCV(): Promise<any> {
   if (cvReadyPromise) return cvReadyPromise;
 
@@ -20,9 +31,11 @@ export function loadOpenCV(): Promise<any> {
       return;
     }
 
+    // Generous absolute ceiling in case the network stalls entirely — the
+    // user-facing timeout is enforced separately by waitForOpenCV().
     const timeout = setTimeout(() => {
-      reject(new Error("OpenCV.js load timeout (30 s)"));
-    }, 30_000);
+      reject(new Error("OpenCV.js load timeout (60 s)"));
+    }, 60_000);
 
     window.Module = {
       onRuntimeInitialized() {
@@ -38,7 +51,7 @@ export function loadOpenCV(): Promise<any> {
     const script = document.createElement("script");
     script.setAttribute("data-opencv", "true");
     script.async = true;
-    script.src = "https://docs.opencv.org/4.8.0/opencv.js";
+    script.src = OPENCV_CDN_URL;
     script.onerror = () => {
       clearTimeout(timeout);
       cvReadyPromise = null;
@@ -48,6 +61,32 @@ export function loadOpenCV(): Promise<any> {
   });
 
   return cvReadyPromise;
+}
+
+/**
+ * Waits for OpenCV to become ready, bounded by `timeoutMs`. Does NOT cancel
+ * the underlying background load on timeout — if it finishes shortly after,
+ * a later retry will resolve immediately.
+ */
+export function waitForOpenCV(timeoutMs = 10_000): Promise<any> {
+  const cvPromise = loadOpenCV();
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`OpenCV not ready within ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    cvPromise.then(
+      (cv) => {
+        clearTimeout(timer);
+        resolve(cv);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
 }
 
 function orderCorners(pts: Point[]): SheetCorners {
