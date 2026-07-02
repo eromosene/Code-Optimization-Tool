@@ -130,8 +130,10 @@ export default function Templates() {
 
   const [name, setName] = useState("");
   const [questionCount, setQuestionCount] = useState(20);
+  const [questionCountInput, setQuestionCountInput] = useState("20");
   const [optionsPerQuestion, setOptionsPerQuestion] = useState(4);
   const [questionsPerBlock, setQuestionsPerBlock] = useState(15);
+  const [questionsPerBlockInput, setQuestionsPerBlockInput] = useState("15");
   const [answers, setAnswers] = useState<string[]>([]);
 
   const resetForm = () => {
@@ -139,16 +141,20 @@ export default function Templates() {
     setEditingId(null);
     setName("");
     setQuestionCount(20);
+    setQuestionCountInput("20");
     setOptionsPerQuestion(4);
     setQuestionsPerBlock(15);
+    setQuestionsPerBlockInput("15");
     setAnswers([]);
   };
 
   const startCreate = () => {
     setName("");
     setQuestionCount(20);
+    setQuestionCountInput("20");
     setOptionsPerQuestion(4);
     setQuestionsPerBlock(15);
+    setQuestionsPerBlockInput("15");
     setAnswers(Array(20).fill(""));
     setEditingId(null);
     setMode("create");
@@ -157,16 +163,27 @@ export default function Templates() {
   const startEdit = (template: Template) => {
     setName(template.name);
     setQuestionCount(template.questionCount);
+    setQuestionCountInput(String(template.questionCount));
     setOptionsPerQuestion(template.optionsPerQuestion);
     setQuestionsPerBlock(template.questionsPerBlock ?? 15);
+    setQuestionsPerBlockInput(String(template.questionsPerBlock ?? 15));
     setAnswers([...template.correctAnswers]);
     setEditingId(template.id);
     setMode("edit");
   };
 
-  const handleQuestionCountChange = (val: number) => {
-    const n = Math.max(1, Math.min(100, val));
+  // Called on every keystroke — keep the raw string as-is (may be empty
+  // or transiently invalid) so users can freely backspace/retype.
+  const handleQuestionCountInputChange = (raw: string) => {
+    setQuestionCountInput(raw);
+  };
+
+  // Called on blur — parse, clamp, and fall back to the last valid value.
+  const commitQuestionCount = () => {
+    const parsed = parseInt(questionCountInput, 10);
+    const n = Number.isNaN(parsed) ? questionCount : Math.max(1, Math.min(100, parsed));
     setQuestionCount(n);
+    setQuestionCountInput(String(n));
     setAnswers((prev) => {
       const next = [...prev];
       while (next.length < n) next.push("");
@@ -174,9 +191,15 @@ export default function Templates() {
     });
   };
 
-  const handleQuestionsPerBlockChange = (val: number) => {
-    const n = Math.max(1, Math.min(100, val));
+  const handleQuestionsPerBlockInputChange = (raw: string) => {
+    setQuestionsPerBlockInput(raw);
+  };
+
+  const commitQuestionsPerBlock = () => {
+    const parsed = parseInt(questionsPerBlockInput, 10);
+    const n = Number.isNaN(parsed) ? questionsPerBlock : Math.max(1, Math.min(100, parsed));
     setQuestionsPerBlock(n);
+    setQuestionsPerBlockInput(String(n));
   };
 
   const handleOptionsChange = (val: number) => {
@@ -277,8 +300,10 @@ export default function Templates() {
                   type="number"
                   min={1}
                   max={100}
-                  value={questionCount}
-                  onChange={(e) => handleQuestionCountChange(parseInt(e.target.value) || 1)}
+                  value={questionCountInput}
+                  onChange={(e) => handleQuestionCountInputChange(e.target.value)}
+                  onBlur={commitQuestionCount}
+                  onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
                 />
               </div>
               <div className="space-y-2">
@@ -289,8 +314,10 @@ export default function Templates() {
                   type="number"
                   min={1}
                   max={100}
-                  value={questionsPerBlock}
-                  onChange={(e) => handleQuestionsPerBlockChange(parseInt(e.target.value) || 1)}
+                  value={questionsPerBlockInput}
+                  onChange={(e) => handleQuestionsPerBlockInputChange(e.target.value)}
+                  onBlur={commitQuestionsPerBlock}
+                  onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
                 />
               </div>
             </div>
