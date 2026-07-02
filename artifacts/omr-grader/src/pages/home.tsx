@@ -12,7 +12,7 @@ import {
 import { Link } from "wouter";
 import { processOMRImage, DetectedAnswer } from "@/lib/omr-processor";
 import { useToast } from "@/hooks/use-toast";
-import { detectAndCorrectSheet, loadOpenCV, waitForOpenCV } from "@/lib/sheet-detector";
+import { detectAndCorrectSheet, detectBubbleGrid, loadOpenCV, waitForOpenCV } from "@/lib/sheet-detector";
 
 type DetectionStatus = "idle" | "detecting" | "found" | "not-found" | "error";
 
@@ -91,6 +91,18 @@ export default function Home() {
       if (corners) {
         setDetectionStatus("found");
         setImageUrl(outCanvas.toDataURL("image/jpeg", 0.92));
+
+        // Try to also auto-position the answer grid over the actual bubble
+        // cluster so the user usually doesn't need to drag it at all.
+        try {
+          const bubbleBox = await detectBubbleGrid(outCanvas);
+          if (bubbleBox) {
+            setGridRect(bubbleBox);
+          }
+        } catch (err) {
+          console.error("[sheet-detector] bubble grid detection error:", err);
+          // Non-fatal — the user can still align the grid manually.
+        }
       } else {
         setDetectionStatus("not-found");
         setImageUrl(srcImg.src);
@@ -360,7 +372,7 @@ export default function Home() {
           {rawImageUrl && detectionStatus === "found" && (
             <div className="flex items-center gap-2 text-xs text-green-600 px-1">
               <CheckCircle2 className="h-3 w-3" />
-              <span>Sheet straightened automatically</span>
+              <span>Sheet straightened and grid aligned automatically</span>
             </div>
           )}
           {rawImageUrl && detectionStatus === "not-found" && (
@@ -390,7 +402,7 @@ export default function Home() {
               </CardHeader>
               <CardContent className="space-y-3">
                 <p className="text-xs text-muted-foreground">
-                  Drag and resize the grid overlay on the image to align with the bubbles, then run detection.
+                  The grid is aligned automatically when possible. Drag or resize it if it needs fine-tuning, then run detection.
                 </p>
                 <Button
                   data-testid="button-run-detection"

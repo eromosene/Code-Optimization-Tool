@@ -253,3 +253,102 @@ export async function detectAndCorrectSheet(
   await perspectiveCorrect(imageElement, corners, outputCanvas);
   return corners;
 }
+
+export type GridBoxPercent = { x: number; y: number; w: number; h: number };
+
+/**
+ * Finds the cluster of filled-in bubble circles on an (ideally already
+ * perspective-corrected) sheet and returns its bounding box as percentages
+ * of the image, ready to seed the grid overlay. Returns null if it can't
+ * find a confident cluster (too few/irregular circles) — callers should
+ * fall back to manual alignment in that case.
+ */
+export async function detectBubbleGrid(
+  canvas: HTMLCanvasElement
+): Promise<GridBoxPercent | null> {
+  const cv = await loadOpenCV();
+  const w = canvas.width;
+  const h = canvas.height;
+  if (w === 0 || h === 0) return null;
+
+  let src = cv.imread(canvas);
+  let gray = new cv.Mat();
+  let blurred = new cv.Mat();
+  let circles = new cv.Mat();
+
+  try {
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+    cv.GaussianBlur(gray, blurred, new cv.Size(9, 9), 2, 2);
+
+    const minDim = Math.min(w, h);
+    const minRadius = Math.max(3, Math.round(minDim * 0.006));
+    const maxRadius = Math.max(minRadius + 2, Math.round(minDim * 0.03));
+    const minDist = Math.max(8, Math.round(minDim * 0.015));
+
+    cv.HoughCircles(
+      blurred,
+      circles,
+      cv.HOUGH_GRADIENT,
+      1,
+      minDist,
+      80,
+      25,
+      minRadius,
+      maxRadius
+    );
+
+    const count = circles.cols;
+    if (count < 8) return null;
+
+    const pts: { x: number; y: number; r: number }[] = [];
+    for (let i = 0; i < count; i++) {
+      pts.push({
+        x: circles.data32F[i * 3],
+        y: circles.data32F[i * 3 + 1],
+        r: circles.data32F[i * 3 + 2],
+      });
+    }
+
+    // Keep only circles with a "typical" bubble radius — filters out stray
+    // circular artifacts (logos, punched holes, etc.) that would otherwise
+    // skew the bounding box.
+    const sortedR = [...pts.map((p) => p.r)].sort((a, b) => a - b);
+    const medianR = sortedR[Math.floor(sortedR.length / 2)];
+    const filtered = pts.filter((p) => p.r > medianR * 0.5 && p.r < medianR * 1.8);
+    if (filtered.length < 8) return null;
+
+    const xs = filtered.map((p) => p.x).sort((a, b) => a - b);
+    const ys = filtered.map((p) => p.y).sort((a, b) => a - b);
+    const pct = (arr: number[], p: number) =>
+      arr[Math.min(arr.length - 1, Math.max(0, Math.round(p * (arr.length - 1))))];
+
+    // Trim the extreme 2% on each side so a couple of outlier detections
+    // don't blow out the box.
+    const minX = pct(xs, 0.02);
+    const maxX = pct(xs, 0.98);
+    const minY = pct(ys, 0.02);
+    const maxY = pct(ys, 0.98);
+
+    const avgR = filtered.reduce((s, p) => s + p.r, 0) / filtered.length;
+    const pad = avgR * 1.5;
+
+    const boxX = Math.max(0, minX - pad);
+    const boxY = Math.max(0, minY - pad);
+    const boxW = Math.min(w - boxX, maxX - minX + pad * 2);
+    const boxH = Math.min(h - boxY, maxY - minY + pad * 2);
+
+    if (boxW <= 0 || boxH <= 0) return null;
+
+    return {
+      x: (boxX / w) * 100,
+      y: (boxY / h) * 100,
+      w: (boxW / w) * 100,
+      h: (boxH / h) * 100,
+    };
+  } finally {
+    src.delete();
+    gray.delete();
+    blurred.delete();
+    circles.delete();
+  }
+}
