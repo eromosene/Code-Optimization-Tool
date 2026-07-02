@@ -23,6 +23,10 @@ export default function Home() {
   const { toast } = useToast();
 
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
+  // rawImageUrl: exactly what the user uploaded (used only as detection input).
+  // imageUrl: the image actually shown/graded — the perspective-corrected
+  // version once auto-alignment succeeds, or the raw photo as a fallback.
+  const [rawImageUrl, setRawImageUrl] = useState<string | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [naturalSize, setNaturalSize] = useState({ width: 0, height: 0 });
   const [gridRect, setGridRect] = useState({ x: 10, y: 10, w: 80, h: 80 });
@@ -36,9 +40,10 @@ export default function Home() {
   const [detectionStatus, setDetectionStatus] = useState<DetectionStatus>("idle");
 
   const imageRef = useRef<HTMLImageElement>(null);
+  const sourceImageRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const debugCanvasRef = useRef<HTMLCanvasElement>(null);
+  const correctionCanvasRef = useRef<HTMLCanvasElement>(null);
 
   const selectedTemplate = templates.find((t) => t.id === selectedTemplateId);
 
@@ -60,42 +65,47 @@ export default function Home() {
     }
   }, [selectedTemplateId]);
 
-  useEffect(() => {
-    if (!imageUrl || naturalSize.width === 0 || !imageRef.current || !debugCanvasRef.current) return;
+  // Runs on the hidden source image (the raw upload) as soon as it's loaded.
+  // On success, the perspective-corrected, straightened sheet becomes the
+  // working image used for grid alignment + grading. On failure/timeout, we
+  // fall back to the raw photo so the user can still align manually.
+  const handleSourceImageLoad = useCallback(async () => {
+    const srcImg = sourceImageRef.current;
+    const outCanvas = correctionCanvasRef.current;
+    if (!srcImg || !outCanvas) return;
 
-    let cancelled = false;
+    setDetectionStatus("detecting");
 
-    async function runDetection() {
-      setDetectionStatus("detecting");
-
-      try {
-        // Bounded wait: if OpenCV hasn't finished loading in the background
-        // yet, give it up to 10s here rather than hanging indefinitely.
-        await waitForOpenCV(10_000);
-      } catch (err) {
-        if (!cancelled) setDetectionStatus("error");
-        return;
-      }
-
-      if (cancelled || !imageRef.current || !debugCanvasRef.current) return;
-
-      try {
-        const corners = await detectAndCorrectSheet(imageRef.current, debugCanvasRef.current);
-        if (cancelled) return;
-        setDetectionStatus(corners ? "found" : "not-found");
-      } catch (err) {
-        console.error("[sheet-detector] error:", err);
-        if (!cancelled) setDetectionStatus("error");
-      }
+    try {
+      // Bounded wait: if OpenCV hasn't finished loading in the background
+      // yet, give it up to 10s here rather than hanging indefinitely.
+      await waitForOpenCV(10_000);
+    } catch {
+      setDetectionStatus("error");
+      setImageUrl(srcImg.src);
+      return;
     }
 
-    runDetection();
-    return () => { cancelled = true; };
-  }, [imageUrl, naturalSize]);
+    try {
+      const corners = await detectAndCorrectSheet(srcImg, outCanvas);
+      if (corners) {
+        setDetectionStatus("found");
+        setImageUrl(outCanvas.toDataURL("image/jpeg", 0.92));
+      } else {
+        setDetectionStatus("not-found");
+        setImageUrl(srcImg.src);
+      }
+    } catch (err) {
+      console.error("[sheet-detector] error:", err);
+      setDetectionStatus("error");
+      setImageUrl(srcImg.src);
+    }
+  }, []);
 
   const handleFileSelect = useCallback((file: File) => {
     const url = URL.createObjectURL(file);
-    setImageUrl(url);
+    setRawImageUrl(url);
+    setImageUrl(null);
     setResults(null);
     setDetectionStatus("idle");
   }, []);
@@ -199,7 +209,9 @@ export default function Home() {
 
     addResult(newResult);
     toast({ title: "Result saved", description: `Scored ${score}/${selectedTemplate.questionCount}` });
+    setRawImageUrl(null);
     setImageUrl(null);
+    setDetectionStatus("idle");
     setResults(null);
     setStudentName("");
   };
@@ -270,7 +282,7 @@ export default function Home() {
                 <button
                   key={t.id}
                   data-testid={`select-template-${t.id}`}
-                  onClick={() => { setSelectedTemplateId(t.id); setResults(null); setImageUrl(null); }}
+                  onClick={() => { setSelectedTemplateId(t.id); setResults(null); setRawImageUrl(null); setImageUrl(null); setDetectionStatus("idle"); }}
                   className={`w-full flex items-center gap-3 rounded-lg border p-3 text-left transition-all hover:bg-accent ${
                     selectedTemplateId === t.id
                       ? "border-primary ring-1 ring-primary bg-primary/5"
@@ -333,29 +345,40 @@ export default function Home() {
           </Card>
 
           {/* Lightweight, non-technical status for background sheet processing */}
-          {imageUrl && detectionStatus === "detecting" && (
+          {rawImageUrl && detectionStatus === "detecting" && (
             <div className="flex items-center gap-2 text-xs text-muted-foreground px-1">
               <RefreshCw className="h-3 w-3 animate-spin" />
               <span>Analyzing your photo…</span>
             </div>
           )}
-          {imageUrl && detectionStatus === "error" && (
+          {rawImageUrl && detectionStatus === "error" && (
             <div className="flex items-center gap-2 text-xs text-amber-600 px-1">
               <AlertTriangle className="h-3 w-3" />
-              <span>Having trouble processing — try again.</span>
+              <span>Having trouble processing — try again. You can still align the grid manually.</span>
             </div>
           )}
-          {imageUrl && detectionStatus === "found" && (
+          {rawImageUrl && detectionStatus === "found" && (
             <div className="flex items-center gap-2 text-xs text-green-600 px-1">
               <CheckCircle2 className="h-3 w-3" />
-              <span>Sheet aligned automatically</span>
+              <span>Sheet straightened automatically</span>
             </div>
           )}
-          <canvas
-            ref={debugCanvasRef}
-            className={`w-full rounded border ${detectionStatus === "found" ? "block" : "hidden"}`}
-            style={{ maxHeight: 200, objectFit: "contain" }}
+          {rawImageUrl && detectionStatus === "not-found" && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground px-1">
+              <AlertTriangle className="h-3 w-3" />
+              <span>Couldn't auto-align — align the grid manually below.</span>
+            </div>
+          )}
+
+          {/* Hidden: raw upload feeds detection; canvas holds the corrected result */}
+          <img
+            ref={sourceImageRef}
+            src={rawImageUrl ?? undefined}
+            onLoad={handleSourceImageLoad}
+            alt=""
+            className="hidden"
           />
+          <canvas ref={correctionCanvasRef} className="hidden" />
 
           {/* 3. Detect */}
           {imageUrl && !results && (
@@ -471,7 +494,15 @@ export default function Home() {
             </CardHeader>
 
             <CardContent className="flex-1 p-0 relative overflow-auto bg-black/5">
-              {!imageUrl ? (
+              {rawImageUrl && !imageUrl ? (
+                <div className="h-full flex flex-col items-center justify-center text-muted-foreground gap-4 p-8 text-center">
+                  <RefreshCw className="h-10 w-10 text-muted-foreground/40 animate-spin" />
+                  <div>
+                    <p className="text-sm font-medium">Analyzing your photo…</p>
+                    <p className="text-xs mt-1">Straightening the sheet before you align the grid</p>
+                  </div>
+                </div>
+              ) : !imageUrl ? (
                 <div className="h-full flex flex-col items-center justify-center text-muted-foreground gap-4 p-8 text-center">
                   <FileUp className="h-12 w-12 text-muted-foreground/20" />
                   <div>
