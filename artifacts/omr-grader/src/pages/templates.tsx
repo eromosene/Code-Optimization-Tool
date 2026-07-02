@@ -18,11 +18,13 @@ type Mode = "list" | "create" | "edit";
 function AnswerGrid({
   questionCount,
   optionsPerQuestion,
+  questionsPerBlock,
   answers,
   onChange,
 }: {
   questionCount: number;
   optionsPerQuestion: number;
+  questionsPerBlock: number;
   answers: string[];
   onChange: (answers: string[]) => void;
 }) {
@@ -34,13 +36,19 @@ function AnswerGrid({
 
   const filledCount = answers.filter((a) => a !== "").length;
 
-  const cols = questionCount > 30 ? 2 : 1;
+  const perBlock = Math.max(1, questionsPerBlock);
+  const blockCount = Math.ceil(questionCount / perBlock);
+  const blocks = Array.from({ length: blockCount }).map((_, b) => {
+    const start = b * perBlock;
+    const end = Math.min(start + perBlock, questionCount);
+    return Array.from({ length: end - start }).map((_, i) => start + i);
+  });
 
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          Click the correct answer bubble for each question.
+          Click the correct answer bubble for each question. Columns match the printed sheet's blocks.
         </p>
         <Badge variant={filledCount === questionCount ? "default" : "outline"} className="text-xs">
           {filledCount}/{questionCount} filled
@@ -48,54 +56,65 @@ function AnswerGrid({
       </div>
 
       <div
-        className="rounded-lg border bg-muted/10 p-3 overflow-y-auto"
+        className="rounded-lg border bg-muted/10 p-3 overflow-x-auto overflow-y-auto"
         style={{ maxHeight: 480 }}
       >
-        <div
-          className="grid gap-x-6 gap-y-1"
-          style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}
-        >
-          {Array.from({ length: questionCount }).map((_, qIdx) => {
-            const currentAnswer = answers[qIdx] ?? "";
-            const isFilled = currentAnswer !== "";
-
-            return (
-              <div
-                key={qIdx}
-                className={`flex items-center gap-2 rounded-md px-2 py-1 transition-colors ${
-                  isFilled ? "bg-background" : "bg-amber-50/60 dark:bg-amber-950/20"
-                }`}
-              >
-                <span className="w-7 text-right text-xs font-mono text-muted-foreground shrink-0 select-none">
-                  {qIdx + 1}.
+        <div className="flex gap-6 w-max">
+          {blocks.map((blockQuestions, bIdx) => (
+            <div
+              key={bIdx}
+              className="flex flex-col gap-1 shrink-0"
+              style={{ minWidth: 190 }}
+            >
+              <div className="text-xs font-semibold text-muted-foreground/70 uppercase tracking-wide pb-1 border-b mb-1">
+                Block {bIdx + 1}
+                <span className="font-normal normal-case ml-1">
+                  (Q{blockQuestions[0] + 1}–{blockQuestions[blockQuestions.length - 1] + 1})
                 </span>
-                <div className="flex gap-1.5">
-                  {Array.from({ length: optionsPerQuestion }).map((_, oIdx) => {
-                    const option = OPTION_LABELS[oIdx];
-                    const isSelected = currentAnswer === option;
-                    return (
-                      <button
-                        key={option}
-                        type="button"
-                        onClick={() => toggle(qIdx, option)}
-                        data-testid={`answer-q${qIdx + 1}-${option}`}
-                        className={`flex h-8 w-8 items-center justify-center rounded-full border-2 text-xs font-bold transition-all select-none ${
-                          isSelected
-                            ? "border-primary bg-primary text-primary-foreground shadow"
-                            : "border-input bg-background text-muted-foreground hover:border-primary/60 hover:bg-accent hover:text-foreground"
-                        }`}
-                      >
-                        {option}
-                      </button>
-                    );
-                  })}
-                </div>
-                {!isFilled && (
-                  <AlertTriangle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
-                )}
               </div>
-            );
-          })}
+              {blockQuestions.map((qIdx) => {
+                const currentAnswer = answers[qIdx] ?? "";
+                const isFilled = currentAnswer !== "";
+
+                return (
+                  <div
+                    key={qIdx}
+                    className={`flex items-center gap-2 rounded-md px-2 py-1 transition-colors ${
+                      isFilled ? "bg-background" : "bg-amber-50/60 dark:bg-amber-950/20"
+                    }`}
+                  >
+                    <span className="w-7 text-right text-xs font-mono text-muted-foreground shrink-0 select-none">
+                      {qIdx + 1}.
+                    </span>
+                    <div className="flex gap-1.5">
+                      {Array.from({ length: optionsPerQuestion }).map((_, oIdx) => {
+                        const option = OPTION_LABELS[oIdx];
+                        const isSelected = currentAnswer === option;
+                        return (
+                          <button
+                            key={option}
+                            type="button"
+                            onClick={() => toggle(qIdx, option)}
+                            data-testid={`answer-q${qIdx + 1}-${option}`}
+                            className={`flex h-8 w-8 items-center justify-center rounded-full border-2 text-xs font-bold transition-all select-none ${
+                              isSelected
+                                ? "border-primary bg-primary text-primary-foreground shadow"
+                                : "border-input bg-background text-muted-foreground hover:border-primary/60 hover:bg-accent hover:text-foreground"
+                            }`}
+                          >
+                            {option}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {!isFilled && (
+                      <AlertTriangle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
         </div>
       </div>
     </div>
@@ -112,6 +131,7 @@ export default function Templates() {
   const [name, setName] = useState("");
   const [questionCount, setQuestionCount] = useState(20);
   const [optionsPerQuestion, setOptionsPerQuestion] = useState(4);
+  const [questionsPerBlock, setQuestionsPerBlock] = useState(15);
   const [answers, setAnswers] = useState<string[]>([]);
 
   const resetForm = () => {
@@ -120,6 +140,7 @@ export default function Templates() {
     setName("");
     setQuestionCount(20);
     setOptionsPerQuestion(4);
+    setQuestionsPerBlock(15);
     setAnswers([]);
   };
 
@@ -127,6 +148,7 @@ export default function Templates() {
     setName("");
     setQuestionCount(20);
     setOptionsPerQuestion(4);
+    setQuestionsPerBlock(15);
     setAnswers(Array(20).fill(""));
     setEditingId(null);
     setMode("create");
@@ -136,6 +158,7 @@ export default function Templates() {
     setName(template.name);
     setQuestionCount(template.questionCount);
     setOptionsPerQuestion(template.optionsPerQuestion);
+    setQuestionsPerBlock(template.questionsPerBlock ?? 15);
     setAnswers([...template.correctAnswers]);
     setEditingId(template.id);
     setMode("edit");
@@ -149,6 +172,11 @@ export default function Templates() {
       while (next.length < n) next.push("");
       return next.slice(0, n);
     });
+  };
+
+  const handleQuestionsPerBlockChange = (val: number) => {
+    const n = Math.max(1, Math.min(100, val));
+    setQuestionsPerBlock(n);
   };
 
   const handleOptionsChange = (val: number) => {
@@ -177,6 +205,7 @@ export default function Templates() {
         name: name.trim(),
         questionCount,
         optionsPerQuestion,
+        questionsPerBlock,
         correctAnswers: [...answers],
         createdAt: Date.now(),
       };
@@ -187,6 +216,7 @@ export default function Templates() {
         name: name.trim(),
         questionCount,
         optionsPerQuestion,
+        questionsPerBlock,
         correctAnswers: [...answers],
       });
       toast({ title: "Template updated", description: `"${name}" has been updated.` });
@@ -252,25 +282,40 @@ export default function Templates() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="tpl-options">Options per Question</Label>
-                <div className="flex gap-2">
-                  {[2, 3, 4, 5].map((n) => (
-                    <button
-                      key={n}
-                      type="button"
-                      onClick={() => handleOptionsChange(n)}
-                      className={`flex-1 rounded-md border py-2 text-sm font-medium transition-colors ${
-                        optionsPerQuestion === n
-                          ? "border-primary bg-primary text-primary-foreground"
-                          : "border-input bg-background hover:bg-accent"
-                      }`}
-                    >
-                      {OPTION_LABELS.slice(0, n).join("")}
-                    </button>
-                  ))}
-                </div>
+                <Label htmlFor="tpl-block">Questions per Block</Label>
+                <Input
+                  id="tpl-block"
+                  data-testid="input-questions-per-block"
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={questionsPerBlock}
+                  onChange={(e) => handleQuestionsPerBlockChange(parseInt(e.target.value) || 1)}
+                />
               </div>
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="tpl-options">Options per Question</Label>
+              <div className="flex gap-2">
+                {[2, 3, 4, 5].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => handleOptionsChange(n)}
+                    className={`flex-1 rounded-md border py-2 text-sm font-medium transition-colors ${
+                      optionsPerQuestion === n
+                        ? "border-primary bg-primary text-primary-foreground"
+                        : "border-input bg-background hover:bg-accent"
+                    }`}
+                  >
+                    {OPTION_LABELS.slice(0, n).join("")}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              e.g. 60 questions ÷ 15 per block = 4 columns (Q1–15, Q16–30, Q31–45, Q46–60), matching a printed sheet.
+            </p>
           </CardContent>
         </Card>
 
@@ -291,6 +336,7 @@ export default function Templates() {
             <AnswerGrid
               questionCount={questionCount}
               optionsPerQuestion={optionsPerQuestion}
+              questionsPerBlock={questionsPerBlock}
               answers={answers}
               onChange={setAnswers}
             />
@@ -410,26 +456,39 @@ export default function Templates() {
                     )}
                   </div>
 
-                  {/* Compact answer preview */}
-                  <div className="rounded-md border bg-muted/20 p-2 overflow-y-auto" style={{ maxHeight: 140 }}>
-                    <div
-                      className="grid gap-x-4 gap-y-0.5"
-                      style={{ gridTemplateColumns: template.questionCount > 20 ? "repeat(2, 1fr)" : "1fr" }}
-                    >
-                      {template.correctAnswers.map((ans, idx) => (
-                        <div key={idx} className="flex items-center gap-2 text-xs py-0.5">
-                          <span className="text-muted-foreground w-5 text-right shrink-0 font-mono">
-                            {idx + 1}.
-                          </span>
-                          {ans ? (
-                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-bold">
-                              {ans}
-                            </span>
-                          ) : (
-                            <span className="text-amber-500 text-xs">—</span>
-                          )}
-                        </div>
-                      ))}
+                  {/* Compact answer preview — blocks matching the printed sheet */}
+                  <div className="rounded-md border bg-muted/20 p-2 overflow-auto" style={{ maxHeight: 140 }}>
+                    <div className="flex gap-3 w-max">
+                      {(() => {
+                        const perBlock = Math.max(1, template.questionsPerBlock ?? 15);
+                        const blockCount = Math.ceil(template.questionCount / perBlock);
+                        return Array.from({ length: blockCount }).map((_, bIdx) => {
+                          const start = bIdx * perBlock;
+                          const end = Math.min(start + perBlock, template.questionCount);
+                          return (
+                            <div key={bIdx} className="flex flex-col gap-0.5 shrink-0">
+                              {Array.from({ length: end - start }).map((_, i) => {
+                                const idx = start + i;
+                                const ans = template.correctAnswers[idx];
+                                return (
+                                  <div key={idx} className="flex items-center gap-2 text-xs py-0.5">
+                                    <span className="text-muted-foreground w-5 text-right shrink-0 font-mono">
+                                      {idx + 1}.
+                                    </span>
+                                    {ans ? (
+                                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-bold">
+                                        {ans}
+                                      </span>
+                                    ) : (
+                                      <span className="text-amber-500 text-xs">—</span>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          );
+                        });
+                      })()}
                     </div>
                   </div>
 

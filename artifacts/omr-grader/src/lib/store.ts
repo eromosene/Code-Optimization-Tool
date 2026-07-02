@@ -13,6 +13,7 @@ export interface Template {
   name: string;
   questionCount: number;
   optionsPerQuestion: number;
+  questionsPerBlock: number;
   correctAnswers: string[];
   gridConfig?: GridConfig;
   createdAt: number;
