@@ -12,7 +12,10 @@ import {
 import { Link } from "wouter";
 import { processOMRImage, DetectedAnswer } from "@/lib/omr-processor";
 import { useToast } from "@/hooks/use-toast";
-import { detectAndCorrectSheet, detectBubbleGrid, loadOpenCV, waitForOpenCV } from "@/lib/sheet-detector";
+import {
+  detectSheetCorners, perspectiveCorrect, detectBubbleGrid,
+  loadOpenCV, waitForOpenCV, SheetCorners,
+} from "@/lib/sheet-detector";
 
 type DetectionStatus = "idle" | "detecting" | "found" | "not-found" | "error";
 
@@ -39,11 +42,23 @@ export default function Home() {
 
   const [detectionStatus, setDetectionStatus] = useState<DetectionStatus>("idle");
 
+  // Corner alignment: `corners` are 4 points in the RAW image's natural
+  // pixel space. `alignStage` tracks whether the user is still positioning
+  // corners on the raw photo or has confirmed them and moved on to grid
+  // alignment on the resulting straightened image.
+  const [corners, setCorners] = useState<SheetCorners | null>(null);
+  const [alignStage, setAlignStage] = useState<"corners" | "grid" | null>(null);
+  const [rawNaturalSize, setRawNaturalSize] = useState({ width: 0, height: 0 });
+  const [draggingCorner, setDraggingCorner] = useState<number | null>(null);
+
   const imageRef = useRef<HTMLImageElement>(null);
   const sourceImageRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const rawContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const correctionCanvasRef = useRef<HTMLCanvasElement>(null);
+  const previewCanvasRef = useRef<HTMLCanvasElement>(null);
+  const warpRafRef = useRef<number | null>(null);
 
   const selectedTemplate = templates.find((t) => t.id === selectedTemplateId);
 
@@ -65,15 +80,47 @@ export default function Home() {
     }
   }, [selectedTemplateId]);
 
-  // Runs on the hidden source image (the raw upload) as soon as it's loaded.
-  // On success, the perspective-corrected, straightened sheet becomes the
-  // working image used for grid alignment + grading. On failure/timeout, we
-  // fall back to the raw photo so the user can still align manually.
-  const handleSourceImageLoad = useCallback(async () => {
+  // Copies the pixels from the (hidden) computation canvas into the visible
+  // live-preview canvas shown during corner alignment.
+  const syncPreviewCanvas = useCallback(() => {
+    const comp = correctionCanvasRef.current;
+    const prev = previewCanvasRef.current;
+    if (!comp || !prev || comp.width === 0 || comp.height === 0) return;
+    prev.width = comp.width;
+    prev.height = comp.height;
+    prev.getContext("2d")?.drawImage(comp, 0, 0);
+  }, []);
+
+  // Re-runs the real perspective warp (getPerspectiveTransform +
+  // warpPerspective) against the given corners and mirrors the result into
+  // the live preview. Throttled to one warp per animation frame so dragging
+  // a handle stays smooth instead of queuing up redundant warps.
+  const runWarp = useCallback((cornerSet: SheetCorners) => {
     const srcImg = sourceImageRef.current;
     const outCanvas = correctionCanvasRef.current;
     if (!srcImg || !outCanvas) return;
 
+    if (warpRafRef.current !== null) cancelAnimationFrame(warpRafRef.current);
+    warpRafRef.current = requestAnimationFrame(() => {
+      warpRafRef.current = null;
+      perspectiveCorrect(srcImg, cornerSet, outCanvas)
+        .then(syncPreviewCanvas)
+        .catch((err) => console.error("[sheet-detector] live warp error:", err));
+    });
+  }, [syncPreviewCanvas]);
+
+  // Runs on the hidden source image (the raw upload) as soon as it's loaded.
+  // Tries to auto-detect the sheet's 4 corners; whether it succeeds or not,
+  // the user lands on the corner-alignment step with draggable handles (an
+  // auto-detected quad, or a sensible default) and an immediate real warp
+  // so there's always something correct to look at, not the skewed raw
+  // photo with lines drawn over it. Only a hard OpenCV failure falls all
+  // the way back to grading the raw photo directly.
+  const handleSourceImageLoad = useCallback(async () => {
+    const srcImg = sourceImageRef.current;
+    if (!srcImg) return;
+
+    setRawNaturalSize({ width: srcImg.naturalWidth, height: srcImg.naturalHeight });
     setDetectionStatus("detecting");
 
     try {
@@ -83,36 +130,128 @@ export default function Home() {
     } catch {
       setDetectionStatus("error");
       setImageUrl(srcImg.src);
+      setAlignStage("grid");
       return;
     }
 
-    try {
-      const corners = await detectAndCorrectSheet(srcImg, outCanvas);
-      if (corners) {
-        setDetectionStatus("found");
-        setImageUrl(outCanvas.toDataURL("image/jpeg", 0.92));
+    const inset = 0.05;
+    const defaultCorners: SheetCorners = [
+      { x: srcImg.naturalWidth * inset, y: srcImg.naturalHeight * inset },
+      { x: srcImg.naturalWidth * (1 - inset), y: srcImg.naturalHeight * inset },
+      { x: srcImg.naturalWidth * (1 - inset), y: srcImg.naturalHeight * (1 - inset) },
+      { x: srcImg.naturalWidth * inset, y: srcImg.naturalHeight * (1 - inset) },
+    ];
 
-        // Try to also auto-position the answer grid over the actual bubble
-        // cluster so the user usually doesn't need to drag it at all.
-        try {
-          const bubbleBox = await detectBubbleGrid(outCanvas);
-          if (bubbleBox) {
-            setGridRect(bubbleBox);
-          }
-        } catch (err) {
-          console.error("[sheet-detector] bubble grid detection error:", err);
-          // Non-fatal — the user can still align the grid manually.
-        }
+    let initialCorners = defaultCorners;
+    try {
+      const detected = await detectSheetCorners(srcImg);
+      if (detected) {
+        initialCorners = detected;
+        setDetectionStatus("found");
       } else {
         setDetectionStatus("not-found");
-        setImageUrl(srcImg.src);
       }
     } catch (err) {
-      console.error("[sheet-detector] error:", err);
-      setDetectionStatus("error");
-      setImageUrl(srcImg.src);
+      console.error("[sheet-detector] corner detection error:", err);
+      setDetectionStatus("not-found");
     }
-  }, []);
+
+    setCorners(initialCorners);
+    setAlignStage("corners");
+
+    try {
+      await perspectiveCorrect(srcImg, initialCorners, correctionCanvasRef.current!);
+      syncPreviewCanvas();
+    } catch (err) {
+      console.error("[sheet-detector] initial warp error:", err);
+    }
+  }, [syncPreviewCanvas]);
+
+  // While a corner handle is being dragged, track the mouse globally (not
+  // just over the image) and live re-warp the image on every move.
+  useEffect(() => {
+    if (draggingCorner === null) return;
+
+    const handleMove = (e: MouseEvent) => {
+      const rect = rawContainerRef.current?.getBoundingClientRect();
+      if (!rect || !corners || rawNaturalSize.width === 0) return;
+      const px = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+      const py = Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height));
+      const next = [...corners] as SheetCorners;
+      next[draggingCorner] = {
+        x: px * rawNaturalSize.width,
+        y: py * rawNaturalSize.height,
+      };
+      setCorners(next);
+      runWarp(next);
+    };
+    const handleUp = () => setDraggingCorner(null);
+
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+    };
+  }, [draggingCorner, corners, rawNaturalSize, runWarp]);
+
+  // Whenever the corner-alignment stage becomes active, make sure the
+  // visible preview canvas reflects whatever's already in the (persistent)
+  // computation canvas — needed because the preview <canvas> element itself
+  // unmounts/remounts as the workspace switches between stages.
+  useEffect(() => {
+    if (alignStage === "corners") {
+      syncPreviewCanvas();
+    }
+  }, [alignStage, syncPreviewCanvas]);
+
+  const handleCornerMouseDown = (e: React.MouseEvent, idx: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDraggingCorner(idx);
+  };
+
+  // Locks in the current corner alignment. Runs one final synchronous warp
+  // first (in case a drag's throttled warp was still pending) so the locked
+  // image is guaranteed to match the exact corners shown, then that becomes
+  // the real working image (imageUrl) used for the grid overlay and all
+  // downstream bubble-darkness sampling.
+  const handleConfirmCorners = useCallback(async () => {
+    const srcImg = sourceImageRef.current;
+    const outCanvas = correctionCanvasRef.current;
+    if (!srcImg || !outCanvas || !corners) return;
+
+    if (warpRafRef.current !== null) {
+      cancelAnimationFrame(warpRafRef.current);
+      warpRafRef.current = null;
+    }
+
+    try {
+      await perspectiveCorrect(srcImg, corners, outCanvas);
+    } catch (err) {
+      console.error("[sheet-detector] final warp error:", err);
+      return;
+    }
+    if (outCanvas.width === 0) return;
+
+    const dataUrl = outCanvas.toDataURL("image/jpeg", 0.92);
+    setImageUrl(dataUrl);
+    setAlignStage("grid");
+
+    detectBubbleGrid(outCanvas)
+      .then((box) => {
+        if (box) setGridRect(box);
+      })
+      .catch((err) => {
+        console.error("[sheet-detector] bubble grid detection error:", err);
+      });
+  }, [corners]);
+
+  const handleReadjustCorners = useCallback(() => {
+    if (!corners) return;
+    setResults(null);
+    setAlignStage("corners");
+  }, [corners]);
 
   const handleFileSelect = useCallback((file: File) => {
     const url = URL.createObjectURL(file);
@@ -120,6 +259,9 @@ export default function Home() {
     setImageUrl(null);
     setResults(null);
     setDetectionStatus("idle");
+    setCorners(null);
+    setAlignStage(null);
+    setRawNaturalSize({ width: 0, height: 0 });
   }, []);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -333,10 +475,10 @@ export default function Home() {
                 onDragOver={(e) => e.preventDefault()}
                 onClick={() => fileInputRef.current?.click()}
               >
-                {imageUrl ? (
+                {rawImageUrl ? (
                   <div className="flex items-center gap-2 text-sm">
                     <CheckCircle2 className="h-4 w-4 text-green-500" />
-                    <span className="text-muted-foreground">Image loaded — align grid below</span>
+                    <span className="text-muted-foreground">Image loaded — align below</span>
                   </div>
                 ) : (
                   <>
@@ -372,13 +514,13 @@ export default function Home() {
           {rawImageUrl && detectionStatus === "found" && (
             <div className="flex items-center gap-2 text-xs text-green-600 px-1">
               <CheckCircle2 className="h-3 w-3" />
-              <span>Sheet straightened and grid aligned automatically</span>
+              <span>Sheet corners detected — check the alignment below</span>
             </div>
           )}
           {rawImageUrl && detectionStatus === "not-found" && (
             <div className="flex items-center gap-2 text-xs text-muted-foreground px-1">
               <AlertTriangle className="h-3 w-3" />
-              <span>Couldn't auto-align — align the grid manually below.</span>
+              <span>Couldn't auto-detect corners — drag the handles below to match the sheet.</span>
             </div>
           )}
 
@@ -392,18 +534,52 @@ export default function Home() {
           />
           <canvas ref={correctionCanvasRef} className="hidden" />
 
-          {/* 3. Detect */}
-          {imageUrl && !results && (
+          {/* 3. Align corners */}
+          {rawImageUrl && alignStage === "corners" && corners && (
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                  3. Detect Answers
+                  3. Align Sheet Corners
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  Drag the four corner handles on the photo so they sit exactly on the edges of the sheet. The preview updates live as you drag.
+                </p>
+                <Button
+                  data-testid="button-confirm-corners"
+                  className="w-full gap-2"
+                  onClick={handleConfirmCorners}
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  Use This Alignment
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* 4. Detect */}
+          {imageUrl && alignStage === "grid" && !results && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                  4. Detect Answers
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
                 <p className="text-xs text-muted-foreground">
                   The grid is aligned automatically when possible. Drag or resize it if it needs fine-tuning, then run detection.
                 </p>
+                {corners && (
+                  <button
+                    type="button"
+                    data-testid="button-readjust-corners"
+                    onClick={handleReadjustCorners}
+                    className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                  >
+                    Re-adjust corners
+                  </button>
+                )}
                 <Button
                   data-testid="button-run-detection"
                   className="w-full gap-2"
@@ -488,7 +664,7 @@ export default function Home() {
 
         {/* Right: image workspace */}
         <div className="lg:col-span-8">
-          <Card className="flex flex-col overflow-hidden" style={{ height: 600 }}>
+          <Card className="flex flex-col overflow-hidden relative" style={{ height: 600 }}>
             <CardHeader className="py-2 px-4 border-b bg-muted/30 shrink-0">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium">Workspace</span>
@@ -497,7 +673,12 @@ export default function Home() {
                     Click bubbles to manually correct detections
                   </span>
                 )}
-                {!results && imageUrl && (
+                {!results && alignStage === "corners" && (
+                  <span className="text-xs text-muted-foreground">
+                    Drag the corner handles to match the sheet's edges
+                  </span>
+                )}
+                {!results && alignStage === "grid" && imageUrl && (
                   <span className="text-xs text-muted-foreground">
                     Drag grid to align · resize handles at corners/edges
                   </span>
@@ -506,20 +687,66 @@ export default function Home() {
             </CardHeader>
 
             <CardContent className="flex-1 p-0 relative overflow-auto bg-black/5">
-              {rawImageUrl && !imageUrl ? (
-                <div className="h-full flex flex-col items-center justify-center text-muted-foreground gap-4 p-8 text-center">
-                  <RefreshCw className="h-10 w-10 text-muted-foreground/40 animate-spin" />
-                  <div>
-                    <p className="text-sm font-medium">Analyzing your photo…</p>
-                    <p className="text-xs mt-1">Straightening the sheet before you align the grid</p>
-                  </div>
-                </div>
-              ) : !imageUrl ? (
+              {!rawImageUrl ? (
                 <div className="h-full flex flex-col items-center justify-center text-muted-foreground gap-4 p-8 text-center">
                   <FileUp className="h-12 w-12 text-muted-foreground/20" />
                   <div>
                     <p className="text-sm font-medium">No image loaded</p>
                     <p className="text-xs mt-1">Select a template and upload a student sheet to begin</p>
+                  </div>
+                </div>
+              ) : alignStage === "corners" && corners ? (
+                <div
+                  ref={rawContainerRef}
+                  className="relative inline-block min-w-full select-none"
+                  style={{ minHeight: "100%" }}
+                >
+                  <img
+                    src={rawImageUrl}
+                    alt="Raw uploaded sheet"
+                    className="block w-full object-contain"
+                    draggable={false}
+                  />
+
+                  <svg
+                    className="absolute inset-0 w-full h-full pointer-events-none"
+                    viewBox="0 0 100 100"
+                    preserveAspectRatio="none"
+                  >
+                    <polygon
+                      points={corners
+                        .map((c) => {
+                          const x = rawNaturalSize.width ? (c.x / rawNaturalSize.width) * 100 : 0;
+                          const y = rawNaturalSize.height ? (c.y / rawNaturalSize.height) * 100 : 0;
+                          return `${x},${y}`;
+                        })
+                        .join(" ")}
+                      className="fill-blue-500/10 stroke-blue-500"
+                      strokeWidth={0.4}
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  </svg>
+
+                  {corners.map((c, i) => {
+                    const x = rawNaturalSize.width ? (c.x / rawNaturalSize.width) * 100 : 0;
+                    const y = rawNaturalSize.height ? (c.y / rawNaturalSize.height) * 100 : 0;
+                    return (
+                      <div
+                        key={i}
+                        data-testid={`corner-handle-${i}`}
+                        className="absolute w-5 h-5 -ml-2.5 -mt-2.5 rounded-full bg-white border-[3px] border-blue-600 shadow-md cursor-grab active:cursor-grabbing z-10"
+                        style={{ left: `${x}%`, top: `${y}%` }}
+                        onMouseDown={(e) => handleCornerMouseDown(e, i)}
+                      />
+                    );
+                  })}
+                </div>
+              ) : !imageUrl ? (
+                <div className="h-full flex flex-col items-center justify-center text-muted-foreground gap-4 p-8 text-center">
+                  <RefreshCw className="h-10 w-10 text-muted-foreground/40 animate-spin" />
+                  <div>
+                    <p className="text-sm font-medium">Analyzing your photo…</p>
+                    <p className="text-xs mt-1">Detecting the sheet's corners</p>
                   </div>
                 </div>
               ) : (
@@ -644,6 +871,17 @@ export default function Home() {
                 </div>
               )}
             </CardContent>
+
+            {/* Live straightened preview shown while adjusting corners — fixed
+                to the card so it stays visible regardless of scroll. */}
+            {alignStage === "corners" && corners && (
+              <div className="absolute bottom-4 right-4 w-36 rounded-md border-2 border-white shadow-lg overflow-hidden bg-white z-30">
+                <div className="text-[10px] font-medium bg-black/70 text-white px-1.5 py-0.5">
+                  Straightened preview
+                </div>
+                <canvas ref={previewCanvasRef} className="w-full h-auto block" />
+              </div>
+            )}
           </Card>
         </div>
       </div>
