@@ -110,12 +110,32 @@ function imageToCanvas(img: HTMLImageElement): HTMLCanvasElement {
   return canvas;
 }
 
+// Modern phone photos are commonly 12MP+ (e.g. 4032x3024). Running Canny +
+// dilate + findContours at full resolution is extremely slow (many seconds
+// to minutes) and provides no real accuracy benefit over a downscaled copy,
+// since we only need a coarse quadrilateral. We detect on a capped-size
+// copy and scale the resulting corner points back up to full resolution.
+const DETECTION_MAX_DIM = 1200;
+
+function imageToDetectionCanvas(
+  img: HTMLImageElement
+): { canvas: HTMLCanvasElement; scale: number } {
+  const w = img.naturalWidth || img.width;
+  const h = img.naturalHeight || img.height;
+  const scale = Math.min(1, DETECTION_MAX_DIM / Math.max(w, h));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(w * scale));
+  canvas.height = Math.max(1, Math.round(h * scale));
+  canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return { canvas, scale };
+}
+
 export async function detectSheetCorners(
   imageElement: HTMLImageElement
 ): Promise<SheetCorners | null> {
   const cv = await loadOpenCV();
 
-  const srcCanvas = imageToCanvas(imageElement);
+  const { canvas: srcCanvas, scale } = imageToDetectionCanvas(imageElement);
   const imageArea = srcCanvas.width * srcCanvas.height;
 
   let src = cv.imread(srcCanvas);
@@ -174,7 +194,14 @@ export async function detectSheetCorners(
       return null;
     }
 
-    return orderCorners(bestCorners);
+    // Detection ran on a downscaled copy — map corners back to full-res
+    // image coordinates.
+    const fullResCorners = bestCorners.map((p) => ({
+      x: p.x / scale,
+      y: p.y / scale,
+    }));
+
+    return orderCorners(fullResCorners);
   } finally {
     src.delete();
     gray.delete();
@@ -267,11 +294,25 @@ export async function detectBubbleGrid(
   canvas: HTMLCanvasElement
 ): Promise<GridBoxPercent | null> {
   const cv = await loadOpenCV();
-  const w = canvas.width;
-  const h = canvas.height;
-  if (w === 0 || h === 0) return null;
+  const fullW = canvas.width;
+  const fullH = canvas.height;
+  if (fullW === 0 || fullH === 0) return null;
 
-  let src = cv.imread(canvas);
+  // Same rationale as detectSheetCorners: HoughCircles on a full-res
+  // (post-warp) sheet is slow on modern phone photos. Detect on a
+  // downscaled copy and scale the resulting box back up.
+  const scale = Math.min(1, DETECTION_MAX_DIM / Math.max(fullW, fullH));
+  const detectCanvas = document.createElement("canvas");
+  detectCanvas.width = Math.max(1, Math.round(fullW * scale));
+  detectCanvas.height = Math.max(1, Math.round(fullH * scale));
+  detectCanvas
+    .getContext("2d")!
+    .drawImage(canvas, 0, 0, detectCanvas.width, detectCanvas.height);
+
+  const w = detectCanvas.width;
+  const h = detectCanvas.height;
+
+  let src = cv.imread(detectCanvas);
   let gray = new cv.Mat();
   let blurred = new cv.Mat();
   let circles = new cv.Mat();
