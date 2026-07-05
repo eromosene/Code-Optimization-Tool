@@ -167,12 +167,12 @@ export default function Home() {
     }
   }, [syncPreviewCanvas]);
 
-  // While a corner handle is being dragged, track the mouse globally (not
+  // While a corner handle is being dragged, track the pointer globally (not
   // just over the image) and live re-warp the image on every move.
   useEffect(() => {
     if (draggingCorner === null) return;
 
-    const handleMove = (e: MouseEvent) => {
+    const handleMove = (e: PointerEvent) => {
       const rect = rawContainerRef.current?.getBoundingClientRect();
       if (!rect || !corners || rawNaturalSize.width === 0) return;
       const px = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
@@ -187,11 +187,11 @@ export default function Home() {
     };
     const handleUp = () => setDraggingCorner(null);
 
-    window.addEventListener("mousemove", handleMove);
-    window.addEventListener("mouseup", handleUp);
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
     return () => {
-      window.removeEventListener("mousemove", handleMove);
-      window.removeEventListener("mouseup", handleUp);
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
     };
   }, [draggingCorner, corners, rawNaturalSize, runWarp]);
 
@@ -205,9 +205,10 @@ export default function Home() {
     }
   }, [alignStage, syncPreviewCanvas]);
 
-  const handleCornerMouseDown = (e: React.MouseEvent, idx: number) => {
+  const handleCornerPointerDown = (e: React.PointerEvent, idx: number) => {
     e.preventDefault();
     e.stopPropagation();
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
     setDraggingCorner(idx);
   };
 
@@ -281,14 +282,15 @@ export default function Home() {
 
   const getContainerRect = () => containerRef.current?.getBoundingClientRect();
 
-  const handleMouseDown = (e: React.MouseEvent, handle?: string) => {
+  const handlePointerDown = (e: React.PointerEvent, handle?: string) => {
     e.preventDefault();
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
     if (handle) setIsResizing(handle);
     else setIsDragging(true);
     setDragStart({ x: e.clientX, y: e.clientY });
   };
 
-  const handleMouseMove = (e: React.MouseEvent) => {
+  const handlePointerMove = (e: React.PointerEvent) => {
     const rect = getContainerRect();
     if (!rect) return;
     const dx = ((e.clientX - dragStart.x) / rect.width) * 100;
@@ -322,7 +324,7 @@ export default function Home() {
     }
   };
 
-  const handleMouseUp = () => {
+  const handlePointerUp = () => {
     setIsDragging(false);
     setIsResizing(null);
   };
@@ -734,9 +736,9 @@ export default function Home() {
                       <div
                         key={i}
                         data-testid={`corner-handle-${i}`}
-                        className="absolute w-5 h-5 -ml-2.5 -mt-2.5 rounded-full bg-white border-[3px] border-blue-600 shadow-md cursor-grab active:cursor-grabbing z-10"
+                        className="absolute w-5 h-5 -ml-2.5 -mt-2.5 rounded-full bg-white border-[3px] border-blue-600 shadow-md cursor-grab active:cursor-grabbing z-10 touch-none"
                         style={{ left: `${x}%`, top: `${y}%` }}
-                        onMouseDown={(e) => handleCornerMouseDown(e, i)}
+                        onPointerDown={(e) => handleCornerPointerDown(e, i)}
                       />
                     );
                   })}
@@ -754,9 +756,9 @@ export default function Home() {
                   ref={containerRef}
                   className="relative inline-block min-w-full select-none"
                   style={{ minHeight: "100%" }}
-                  onMouseMove={handleMouseMove}
-                  onMouseUp={handleMouseUp}
-                  onMouseLeave={handleMouseUp}
+                  onPointerMove={handlePointerMove}
+                  onPointerUp={handlePointerUp}
+                  onPointerLeave={handlePointerUp}
                 >
                   <img
                     ref={imageRef}
@@ -770,14 +772,14 @@ export default function Home() {
                   {/* Grid overlay (alignment mode) */}
                   {!results && selectedTemplate && (
                     <div
-                      className="absolute border-2 border-blue-500 bg-blue-500/5 cursor-move"
+                      className="absolute border-2 border-blue-500 bg-blue-500/5 cursor-move touch-none"
                       style={{
                         left: `${gridRect.x}%`,
                         top: `${gridRect.y}%`,
                         width: `${gridRect.w}%`,
                         height: `${gridRect.h}%`,
                       }}
-                      onMouseDown={(e) => handleMouseDown(e)}
+                      onPointerDown={(e) => handlePointerDown(e)}
                     >
                       <div className="absolute inset-0 flex flex-col pointer-events-none">
                         {Array.from({ length: selectedTemplate.questionCount }).map((_, qIdx) => (
@@ -803,9 +805,9 @@ export default function Home() {
                       ].map((h) => (
                         <div
                           key={h.pos}
-                          className="absolute w-3 h-3 bg-white border-2 border-blue-500 rounded-sm z-10"
+                          className="absolute w-3 h-3 bg-white border-2 border-blue-500 rounded-sm z-10 touch-none"
                           style={{ cursor: h.cursor, ...h.style as React.CSSProperties }}
-                          onMouseDown={(e) => { e.stopPropagation(); handleMouseDown(e, h.pos); }}
+                          onPointerDown={(e) => { e.stopPropagation(); handlePointerDown(e, h.pos); }}
                         />
                       ))}
                     </div>
