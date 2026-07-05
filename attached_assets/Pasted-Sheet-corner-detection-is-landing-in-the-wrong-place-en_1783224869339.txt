@@ -1,0 +1,12 @@
+Sheet-corner detection is landing in the wrong place entirely on some templates — on the Yemsol sheet, the grid overlay lands on the header/instructions text near the top instead of the 60-question bubble grid near the bottom. This means detection is either not running, or its result isn't actually what's positioning the on-screen grid — some fixed default is showing regardless of what (if anything) was detected.
+
+Fix this properly, in two parts:
+
+PART A — Detect the right thing:
+1. Stop treating "the sheet's outer page edge" as the target. Instead, specifically detect the ANSWER BUBBLE GRID BLOCK — the dense region of many small, evenly-spaced repeating cells/circles. This has a distinctive structure (many small uniform contours in a regular repeating pattern) that's very different from header text or instruction paragraphs (sparse, irregular contours).
+2. Among candidate regions found, select the one with the strongest "many small evenly-spaced shapes" signal as the answer grid — not simply the largest rectangle on the page, and not a fixed position/percentage guess.
+
+PART B — Make failures visible instead of silent:
+3. Add an on-screen (not console-only) indicator showing whether the current grid position came from real auto-detection or a fallback default, plus a rough confidence level. This needs to be visible enough to screenshot and immediately tell which happened — past fixes have silently shown wrong defaults with no indication anything failed.
+4. If detection confidence is low or no grid-like region is found, do NOT display a positioned guess that looks like a confident result. Show the manual alignment tool clearly labeled as a fallback, starting from a neutral centered position rather than a wrong guess.
+5. Test explicitly against BOTH the NAPPS sheet (short header) and the Yemsol sheet (long header/instructions before the grid). Both must land correctly on their own 60-question grid — not the header — before this is done. Report back, via the visible indicator, what actually happened on each.
